@@ -223,6 +223,7 @@ void DataTransmit::initialParam()
     m_sign[5] = 0x0a;
     m_sign[6] = 0x9f;
     m_sign[7] = 0xf9;
+    init_crc_table();
 }
 
 void DataTransmit::InitialConnection()
@@ -261,7 +262,7 @@ int DataTransmit::SendData(char *buf, int len)
     BH bh;
     memcpy(bh.sign, m_sign, 8);
     bh.blen = len;
-    bh.chksum = 0;
+    bh.chksum = crc32(0xffffffff, (unsigned char*)buf, len);
     bh.flag = 0;
 
     sendbytes = send(m_conn_sock, &bh, sizeof(bh), 0);
@@ -323,8 +324,9 @@ void *DataTransmit::listen_clt(void *param)
         dt->errMsg("listen on %d failed", dt->m_localport);
         return NULL;
     }
-    dt->errMsg("listening on %d...", dt->m_localport);
+
     while (!dt->m_isterminate){
+        dt->errMsg("listening on %d...", dt->m_localport);
         dt->m_conn_sock = dt->m_nc.socket_accept(sockfd, ACCEPT_TIMEOUT, &dt->m_remote);
         if (dt->m_conn_sock > 0){
             dt->errMsg("get a connection from %s(%d)", dt->m_remote.szip, dt->m_remote.port);
@@ -357,6 +359,7 @@ void *DataTransmit::heart_beat(void *param)
         }
         sleep(HEARTBEAT_INTERVAL);
     }
+    dt->errMsg("heart_beat thread terminate");
     return NULL;
 }
 
@@ -396,7 +399,7 @@ void *DataTransmit::recv_data(void *param)
     memset(&bh, 0, sizeof(BH));
     memset(buf, 0, MAX_DATA_LEN);
 
-    while (!dt->m_isterminate){
+    while (!dt->m_isterminate && dt->m_isconnect){
         ret = select(dt->m_conn_sock+1, &in, NULL, NULL, &timest);
         if (ret < 0){
             if (errno == EINTR)
@@ -413,21 +416,55 @@ void *DataTransmit::recv_data(void *param)
                 dt->errMsg("disconnected");
                 break;
             }
-            dt->errMsg("recv %d bytes %s", ret, bh.sign);
+            //dt->errMsg("recv %d bytes %s", ret, bh.sign);
             if (ret == sizeof(BH) && memcmp(&bh.sign, dt->m_sign, 8) == 0){
                 ret = recv(dt->m_conn_sock, buf, bh.blen, 0);
-                //callback function
-                if (dt->m_callbackfunc != NULL)
-                    dt->m_callbackfunc(buf, bh.blen);
+                if (bh.chksum != dt->crc32(0xffffffff, (unsigned char*)buf, ret)){
+                    dt->errMsg("checksum error");
+                }
+                else{
+                    //callback function
+                    if (dt->m_callbackfunc != NULL)
+                        dt->m_callbackfunc(buf, bh.blen);
+                }
             }
             else if(ret == 16){
                 //heart beat packet
+                dt->errMsg("heart beat");
             }
             else{
                 ret = recv(dt->m_conn_sock, buf, MAX_DATA_LEN, 0);
             }
         }
     }
+    dt->errMsg("recv_data thread terminate");
     free(buf);
     return NULL;
+}
+
+void DataTransmit::init_crc_table()
+{
+    unsigned int c;
+    unsigned int i,j;
+
+    for(i=0; i<256; i++)
+    {
+        c = i;
+        for(j=0; j<8; j++)
+        {
+            if(c & 1)
+                c = 0xedb88320L ^ (c>>1);
+            else
+                c = c >> 1;
+        }
+        crc_table[i] = c;
+    }
+}
+
+int DataTransmit::crc32(unsigned int crc, unsigned char *buffer, unsigned int size)
+{
+    unsigned int i;
+    for(i=0; i<size; i++)
+        crc = crc_table[(crc^buffer[i])&0xff]^(crc>>8);
+    return crc;
 }

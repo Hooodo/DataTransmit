@@ -56,6 +56,7 @@ private:
     bool m_isconnect;
     bool m_isheartbeat;
     unsigned char m_sign[8];
+    unsigned int  crc_table[256];
     int m_conn_sock;
     callback_t m_callbackfunc;
     NetCore m_nc;
@@ -68,6 +69,8 @@ private:
     void initialParam();
     void resolveHost(const char *szname);
     void errMsg(const char *fmt, ...);
+    void init_crc_table();
+    int  crc32(unsigned int crc, unsigned char *buffer, unsigned int size);
     static void *connect_svr(void *param);
     static void *listen_clt(void *param);
     static void *recv_data(void *param);
