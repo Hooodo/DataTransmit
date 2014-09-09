@@ -1,10 +1,28 @@
-#include <iostream>
+#include "DataTransmit.h"
 
-using namespace std;
+void recvfunc(char *buf, int len)
+{
+    printf("recv(%d):%s\n", len, buf);
+}
 
 int main()
 {
-    cout << "Hello World!" << endl;
+    char buf[1024];
+
+    DataTransmit *dt;
+    dt = new DataTransmit(9999);
+    dt->SetCallbackfunction(recvfunc);
+    dt->InitialConnection();
+    strcpy(buf, "hello world!\0");
+    while (true){
+        if (dt->GetConnectionStatus()){
+            dt->SendData(buf, 1024);
+            printf("sending %s\n", buf);
+            break;
+        }
+        sleep(3);
+    }
+    sleep(100);
+
     return 0;
 }
-
