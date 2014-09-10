@@ -76,7 +76,7 @@ private:
     void initialParam();
     void resolveHost(const char *szname);
     void errMsg(const char *fmt, ...);
-    void P_RC4(unsigned char* pkey, unsigned char* pin, unsigned char* pout, unsigned char len);
+    void P_RC4(unsigned char* pkey, unsigned char* pin, unsigned char* pout, unsigned int len);
     void init_key();
     void init_crc_table();
     int  crc32(unsigned int crc, unsigned char *buffer, unsigned int size);

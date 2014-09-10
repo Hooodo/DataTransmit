@@ -7,7 +7,7 @@ void recvfunc(char *buf, int len)
 
 int main()
 {
-    char buf[1024];
+    char buf[1000];
 
     DataTransmit *dt;
     dt = new DataTransmit(9999);
@@ -17,7 +17,7 @@ int main()
     strcpy(buf, "hello world!\0");
     while (true){
         if (dt->GetConnectionStatus()){
-            dt->SendData(buf, 1024);
+            dt->SendData(buf, 1000);
             printf("sending %s\n", buf);
             break;
         }

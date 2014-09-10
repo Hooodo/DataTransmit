@@ -381,7 +381,7 @@ void *DataTransmit::listen_clt(void *param)
         addr.s_addr = inet_addr(dt->m_localip);
 
     sockfd = dt->m_nc.socket_new_listen(SOCK_STREAM, dt->m_localport, dt->m_islocalip?&addr:NULL);
-    //dt->errMsg("%d", sockfd);
+
     int acc_time = ACCEPT_TIME;
     void *tret;
     if (sockfd < 0){
@@ -456,11 +456,11 @@ void *DataTransmit::udp_clt(void *param)
         if (ret == sizeof(BH) && memcmp(buf, dt->m_sign, 8) == 0){
             memcpy(&bh, buf, sizeof(bh));
             ret = recv(dt->m_conn_sock, buf, bh.blen, 0);
-            if (bh.chksum != (unsigned int)dt->crc32(0xffffffff, (unsigned char*)buf, ret)){
+            dt->P_RC4(dt->m_key, (unsigned char*)buf, (unsigned char*)outbuf, bh.blen);
+            if (bh.chksum != (unsigned int)dt->crc32(0xffffffff, (unsigned char*)outbuf, ret)){
                 dt->errMsg("checksum error");
             }else{
-                //decrypt and callback function
-                dt->P_RC4(dt->m_key, (unsigned char*)buf, (unsigned char*)outbuf, bh.blen);
+                //callback function
                 if (dt->m_callbackfunc != NULL)
                     dt->m_callbackfunc(outbuf, bh.blen);
             }
@@ -551,15 +551,16 @@ void *DataTransmit::recv_data(void *param)
                 dt->errMsg("disconnected");
                 break;
             }
-            //dt->errMsg("recv %d bytes %s", ret, bh.sign);
+
             if (ret == sizeof(BH) && memcmp(&bh.sign, dt->m_sign, 8) == 0){
                 ret = recv(dt->m_conn_sock, buf, bh.blen, 0);
-                if (bh.chksum != (unsigned int)dt->crc32(0xffffffff, (unsigned char*)buf, ret)){
+                //decrypt
+                dt->P_RC4(dt->m_key, (unsigned char*)buf, (unsigned char*)outbuf, bh.blen);
+                if (bh.chksum != (unsigned int)dt->crc32(0xffffffff, (unsigned char*)outbuf, ret)){
                     dt->errMsg("checksum error");
                 }
                 else{
-                    //decrypt and callback function
-                    dt->P_RC4(dt->m_key, (unsigned char*)buf, (unsigned char*)outbuf, bh.blen);
+                    //callback function
                     if (dt->m_callbackfunc != NULL)
                         dt->m_callbackfunc(outbuf, bh.blen);
                 }
@@ -626,7 +627,7 @@ void DataTransmit::init_key()
     m_key[15] = 0x0B;
 }
 
-void DataTransmit::P_RC4(unsigned char *pkey, unsigned char *pin, unsigned char *pout, unsigned char len)
+void DataTransmit::P_RC4(unsigned char *pkey, unsigned char *pin, unsigned char *pout, unsigned int len)
 {
     unsigned char S[256],K[256],temp;
     unsigned int  i,j,t,x;
