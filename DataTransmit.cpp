@@ -26,7 +26,7 @@ int NetCore::socket_new(int type)
     return sock;
 }
 
-int NetCore::socket_new_connect(int type, int port, const struct in_addr *addr)
+int NetCore::socket_new_connect(int port, const struct in_addr *addr)
 {
     int sock, ret, error, flags;
     socklen_t len;
@@ -40,7 +40,7 @@ int NetCore::socket_new_connect(int type, int port, const struct in_addr *addr)
     rem_addr.sin_port = htons(port);
     memcpy(&rem_addr.sin_addr, addr, sizeof(rem_addr.sin_addr));
 
-    sock = socket_new(type);
+    sock = socket_new(SOCK_STREAM);
     if (sock < 0)
         return sock;
     /* add the non-blocking flag to this socket */
@@ -159,6 +159,33 @@ int NetCore::socket_accept(int sockfd, int timeout, struct HOST_INFO *hostinfo)
     return -1;
 }
 
+int NetCore::udp_connect(/*int localport, */int remoteport, const struct in_addr *addr)
+{
+    int ret, sock;
+    struct sockaddr_in myaddr;
+
+    sock = socket_new(SOCK_DGRAM);
+    if (sock < 0)
+        return -1;
+    myaddr.sin_family = AF_INET;
+    /*myaddr.sin_port = htons(localport);
+    myaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    ret = bind(sock, (struct sockaddr *)&myaddr, sizeof(myaddr));
+    if (ret < 0){
+        close(sock);
+        return -2;
+    }*/
+    myaddr.sin_port = htons(remoteport);
+    memcpy(&myaddr.sin_addr, addr, sizeof(myaddr.sin_addr));
+    ret = connect(sock, (struct sockaddr *)&myaddr, sizeof(myaddr));
+    if (ret < 0){
+        close(sock);
+        return -3;
+    }
+    return sock;
+}
+
 DataTransmit::~DataTransmit()
 {
     StopConnection();
@@ -166,15 +193,21 @@ DataTransmit::~DataTransmit()
 
 DataTransmit::DataTransmit(const char *svr_ip, int svr_port)
 {
+    initialParam();
     m_isserver = false;
     resolveHost(svr_ip);
     m_svrport = svr_port;
 }
 
-DataTransmit::DataTransmit(int local_port)
+DataTransmit::DataTransmit(int local_port, const char *local_ip)
 {
+    initialParam();
     m_isserver = true;
     m_localport = local_port;
+    if (local_ip){
+        strcpy(m_localip, local_ip);
+        m_islocalip = true;
+    }
 }
 
 void DataTransmit::errMsg(const char *fmt, ...)
@@ -214,6 +247,8 @@ void DataTransmit::initialParam()
     m_isterminate = false;
     m_isconnect = false;
     m_isheartbeat = true;
+    m_isudp = false;
+    m_islocalip = false;
     m_callbackfunc = NULL;
     m_sign[0] = 0xf9;
     m_sign[1] = 0x9f;
@@ -231,7 +266,10 @@ void DataTransmit::InitialConnection()
     int err;
     if (m_isserver)
     {
-        err = pthread_create(&m_ptd_clt, NULL, listen_clt, this);
+        if (!m_isudp)
+            err = pthread_create(&m_ptd_lsnclt, NULL, listen_clt, this);
+        else
+            err = pthread_create(&m_ptd_lsnclt, NULL, udp_clt, this);
     }
     else
     {
@@ -243,6 +281,7 @@ void DataTransmit::InitialConnection()
 void DataTransmit::StopConnection()
 {
     m_isconnect = false;
+    m_isterminate = true;
     shutdown(m_conn_sock, 2);
     close(m_conn_sock);
 }
@@ -250,6 +289,11 @@ void DataTransmit::StopConnection()
 void DataTransmit::SetCallbackfunction(callback_t func)
 {
     m_callbackfunc = func;
+}
+
+void DataTransmit::SetUseUdp(bool set)
+{
+    m_isudp = set;
 }
 
 int DataTransmit::SendData(char *buf, int len)
@@ -308,6 +352,14 @@ int DataTransmit::GetConnectionStatus()
     return m_isconnect;
 }
 
+int DataTransmit::GetConnectionPort()
+{
+    if (m_isserver)
+        return m_localport;
+    else
+        return m_svrport;
+}
+
 HOST_INFO DataTransmit::GetRemoteHostInfo()
 {
     return m_remote;
@@ -316,7 +368,12 @@ HOST_INFO DataTransmit::GetRemoteHostInfo()
 void *DataTransmit::listen_clt(void *param)
 {
     DataTransmit *dt = (DataTransmit *)param;
-    int sockfd = dt->m_nc.socket_new_listen(SOCK_STREAM, dt->m_localport, NULL);
+    struct in_addr *addr;
+    addr = NULL;
+    if (dt->m_islocalip)
+        addr->s_addr = inet_addr(dt->m_localip);
+
+    int sockfd = dt->m_nc.socket_new_listen(SOCK_STREAM, dt->m_localport, addr);
     //dt->errMsg("%d", sockfd);
     int acc_time = ACCEPT_TIME;
     void *tret;
@@ -332,7 +389,8 @@ void *DataTransmit::listen_clt(void *param)
             dt->errMsg("get a connection from %s(%d)", dt->m_remote.szip, dt->m_remote.port);
             dt->m_isconnect = true;
             pthread_create(&dt->m_ptd_recv, NULL, dt->recv_data, dt);
-            pthread_create(&dt->m_ptd_heartbeat, NULL, dt->heart_beat, dt);
+            if (dt->m_isheartbeat)
+                pthread_create(&dt->m_ptd_heartbeat, NULL, dt->heart_beat, dt);
             pthread_join(dt->m_ptd_recv, &tret);
         }
         if (acc_time != -1){
@@ -342,6 +400,62 @@ void *DataTransmit::listen_clt(void *param)
         }
     }
 
+    return NULL;
+}
+
+void *DataTransmit::udp_clt(void *param)
+{
+    DataTransmit *dt = (DataTransmit *)param;
+    int sockfd, ret;
+    socklen_t len;
+    char *buf;
+    BH bh;
+    struct sockaddr_in addr;
+
+    sockfd = dt->m_nc.socket_new(SOCK_DGRAM);
+    if (sockfd < 0)
+        return NULL;
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(dt->m_localport);
+    if (dt->m_islocalip)
+        addr.sin_addr.s_addr = inet_addr(dt->m_localip);
+    else
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    ret = bind(sockfd, (struct sockaddr *)&addr, sizeof(addr));
+    if (ret < 0){
+        close(sockfd);
+        return NULL;
+    }
+    dt->m_conn_sock = sockfd;
+    buf = (char *)malloc(MAX_DATA_LEN);
+    memset(buf, 0, MAX_DATA_LEN);
+    dt->errMsg("listening on %d...", dt->m_localport);
+    while(dt->m_isterminate){
+        len = sizeof(addr);
+        ret = recvfrom(sockfd, buf, MAX_DATA_LEN, MSG_DONTWAIT, (struct sockaddr*)&addr, &len);
+        if (ret == 0){
+            dt->m_isconnect = false;
+            close(sockfd);
+            break;
+        }
+        if (ret == sizeof(BH) && memcmp(&bh.sign, dt->m_sign, 8) == 0){
+            ret = recv(dt->m_conn_sock, buf, bh.blen, 0);
+            if (bh.chksum != (unsigned int)dt->crc32(0xffffffff, (unsigned char*)buf, ret)){
+                dt->errMsg("checksum error");
+            }
+            else{
+                //callback function
+                if (dt->m_callbackfunc != NULL)
+                    dt->m_callbackfunc(buf, bh.blen);
+            }
+        }
+        else{
+            ret = recv(dt->m_conn_sock, buf, MAX_DATA_LEN, 0);
+        }
+    }
+    free(buf);
     return NULL;
 }
 
@@ -369,12 +483,16 @@ void *DataTransmit::connect_svr(void *param)
     void *tret;
     while (!dt->m_isterminate){
         dt->errMsg("connecting %s(%d)...", inet_ntoa(dt->m_addr), dt->m_svrport);
-        dt->m_conn_sock = dt->m_nc.socket_new_connect(SOCK_STREAM, dt->m_svrport, &dt->m_addr);
+        if (!dt->m_isudp)
+            dt->m_conn_sock = dt->m_nc.socket_new_connect(dt->m_svrport, &dt->m_addr);
+        else
+            dt->m_conn_sock = dt->m_nc.udp_connect(dt->m_svrport, &dt->m_addr);
         if (dt->m_conn_sock > 0){
             dt->m_isconnect = true;
             dt->errMsg("connect success");
             pthread_create(&dt->m_ptd_recv, NULL, dt->recv_data, dt);
-            pthread_create(&dt->m_ptd_heartbeat, NULL, dt->heart_beat, dt);
+            if (dt->m_isheartbeat)
+                pthread_create(&dt->m_ptd_heartbeat, NULL, dt->heart_beat, dt);
             pthread_join(dt->m_ptd_recv, &tret);
         }
         sleep(CONN_INTERVAL);
@@ -419,7 +537,7 @@ void *DataTransmit::recv_data(void *param)
             //dt->errMsg("recv %d bytes %s", ret, bh.sign);
             if (ret == sizeof(BH) && memcmp(&bh.sign, dt->m_sign, 8) == 0){
                 ret = recv(dt->m_conn_sock, buf, bh.blen, 0);
-                if (bh.chksum != dt->crc32(0xffffffff, (unsigned char*)buf, ret)){
+                if (bh.chksum != (unsigned int)dt->crc32(0xffffffff, (unsigned char*)buf, ret)){
                     dt->errMsg("checksum error");
                 }
                 else{

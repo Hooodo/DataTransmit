@@ -2,7 +2,7 @@
 #define CMNHDR_H
 
 #define DEBUG
-
+#define USE_UDP
 //Data
 #define MAX_DATA_LEN 4*1024*1024
 

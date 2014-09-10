@@ -26,23 +26,26 @@ class NetCore
 {
 public:
     static int socket_new(int type);
-    static int socket_new_connect(int type, int port, const struct in_addr *addr);
+    static int socket_new_connect(int port, const struct in_addr *addr);
     static int socket_new_listen(int type, int port, const struct in_addr *addr);
     static int socket_accept(int sockfd, int timeout, struct HOST_INFO *hostinfo);
+    static int udp_connect(/*int localport, */int remoteport, const struct in_addr *addr);
 };
 
 class DataTransmit
 {
 public:
     DataTransmit(const char *svr_ip, int svr_port);
-    DataTransmit(int local_port);
+    DataTransmit(int local_port, const char *local_ip=NULL);
     ~DataTransmit();
     void SetCallbackfunction(callback_t func);
+    void SetUseUdp(bool set);
     int SendData(char *buf, int len);
     int RecvData(char *buf, int len);
     void InitialConnection();
     void StopConnection();
     int GetConnectionStatus();
+    int GetConnectionPort();
     HOST_INFO GetRemoteHostInfo();
 
 private:
@@ -55,6 +58,9 @@ private:
     bool m_isterminate;
     bool m_isconnect;
     bool m_isheartbeat;
+    bool m_isudp;
+    bool m_islocalip;
+    char m_localip[16];
     unsigned char m_sign[8];
     unsigned int  crc_table[256];
     int m_conn_sock;
@@ -62,7 +68,7 @@ private:
     NetCore m_nc;
 
     pthread_t m_ptd_connsvr;
-    pthread_t m_ptd_clt;
+    pthread_t m_ptd_lsnclt;
     pthread_t m_ptd_recv;
     pthread_t m_ptd_heartbeat;
 
@@ -75,6 +81,7 @@ private:
     static void *listen_clt(void *param);
     static void *recv_data(void *param);
     static void *heart_beat(void *param);
+    static void *udp_clt(void *param);
 };
 
 #endif // DATATRANSMIT_H
