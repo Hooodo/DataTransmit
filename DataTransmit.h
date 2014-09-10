@@ -62,6 +62,7 @@ private:
     bool m_islocalip;
     char m_localip[16];
     unsigned char m_sign[8];
+    unsigned char m_key[16];
     unsigned int  crc_table[256];
     int m_conn_sock;
     callback_t m_callbackfunc;
@@ -75,8 +76,11 @@ private:
     void initialParam();
     void resolveHost(const char *szname);
     void errMsg(const char *fmt, ...);
+    void P_RC4(unsigned char* pkey, unsigned char* pin, unsigned char* pout, unsigned char len);
+    void init_key();
     void init_crc_table();
     int  crc32(unsigned int crc, unsigned char *buffer, unsigned int size);
+
     static void *connect_svr(void *param);
     static void *listen_clt(void *param);
     static void *recv_data(void *param);

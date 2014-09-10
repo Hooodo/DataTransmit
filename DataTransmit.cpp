@@ -259,6 +259,7 @@ void DataTransmit::initialParam()
     m_sign[6] = 0x9f;
     m_sign[7] = 0xf9;
     init_crc_table();
+    init_key();
 }
 
 void DataTransmit::InitialConnection()
@@ -294,6 +295,7 @@ void DataTransmit::SetCallbackfunction(callback_t func)
 void DataTransmit::SetUseUdp(bool set)
 {
     m_isudp = set;
+    m_isheartbeat = !m_isudp;
 }
 
 int DataTransmit::SendData(char *buf, int len)
@@ -301,7 +303,7 @@ int DataTransmit::SendData(char *buf, int len)
     int sendbytes;
     int leftbytes;
     int totalbytes;
-
+    char *outbuf;
     //Send block head
     BH bh;
     memcpy(bh.sign, m_sign, 8);
@@ -319,18 +321,23 @@ int DataTransmit::SendData(char *buf, int len)
     leftbytes = len;
     totalbytes = 0;
     sendbytes = 0;
+    //crypt
+    outbuf = (char *)malloc(MAX_DATA_LEN);
+    P_RC4(m_key, (unsigned char*)buf, (unsigned char*)outbuf, len);
     if (m_isconnect){
         while (sendbytes < leftbytes){
             leftbytes = len - totalbytes;
-            sendbytes = send(m_conn_sock, buf+totalbytes, leftbytes, 0);
+            sendbytes = send(m_conn_sock, outbuf+totalbytes, leftbytes, 0);
             if (sendbytes < 0){
                 m_isconnect = false;
+                free(outbuf);
                 errMsg("send data failed, %d bytes", leftbytes);
                 return -1;
             }
             totalbytes += sendbytes;
         }
     }
+    free(outbuf);
     return len;
 }
 
@@ -368,12 +375,12 @@ HOST_INFO DataTransmit::GetRemoteHostInfo()
 void *DataTransmit::listen_clt(void *param)
 {
     DataTransmit *dt = (DataTransmit *)param;
-    struct in_addr *addr;
-    addr = NULL;
+    int sockfd;
+    struct in_addr addr;
     if (dt->m_islocalip)
-        addr->s_addr = inet_addr(dt->m_localip);
+        addr.s_addr = inet_addr(dt->m_localip);
 
-    int sockfd = dt->m_nc.socket_new_listen(SOCK_STREAM, dt->m_localport, addr);
+    sockfd = dt->m_nc.socket_new_listen(SOCK_STREAM, dt->m_localport, dt->m_islocalip?&addr:NULL);
     //dt->errMsg("%d", sockfd);
     int acc_time = ACCEPT_TIME;
     void *tret;
@@ -409,6 +416,7 @@ void *DataTransmit::udp_clt(void *param)
     int sockfd, ret;
     socklen_t len;
     char *buf;
+    char *outbuf;
     BH bh;
     struct sockaddr_in addr;
 
@@ -430,32 +438,38 @@ void *DataTransmit::udp_clt(void *param)
     }
     dt->m_conn_sock = sockfd;
     buf = (char *)malloc(MAX_DATA_LEN);
+    outbuf = (char *)malloc(MAX_DATA_LEN);
     memset(buf, 0, MAX_DATA_LEN);
-    dt->errMsg("listening on %d...", dt->m_localport);
-    while(dt->m_isterminate){
+    memset(outbuf, 0, MAX_DATA_LEN);
+    dt->errMsg("listening on %d(udp)...", dt->m_localport);
+    while(!dt->m_isterminate){
         len = sizeof(addr);
         ret = recvfrom(sockfd, buf, MAX_DATA_LEN, MSG_DONTWAIT, (struct sockaddr*)&addr, &len);
+        if (ret < 0)
+            continue;
+        dt->errMsg("recv %d bytes from %s", ret, inet_ntoa(addr.sin_addr));
         if (ret == 0){
             dt->m_isconnect = false;
             close(sockfd);
             break;
         }
-        if (ret == sizeof(BH) && memcmp(&bh.sign, dt->m_sign, 8) == 0){
+        if (ret == sizeof(BH) && memcmp(buf, dt->m_sign, 8) == 0){
+            memcpy(&bh, buf, sizeof(bh));
             ret = recv(dt->m_conn_sock, buf, bh.blen, 0);
             if (bh.chksum != (unsigned int)dt->crc32(0xffffffff, (unsigned char*)buf, ret)){
                 dt->errMsg("checksum error");
-            }
-            else{
-                //callback function
+            }else{
+                //decrypt and callback function
+                dt->P_RC4(dt->m_key, (unsigned char*)buf, (unsigned char*)outbuf, bh.blen);
                 if (dt->m_callbackfunc != NULL)
-                    dt->m_callbackfunc(buf, bh.blen);
+                    dt->m_callbackfunc(outbuf, bh.blen);
             }
-        }
-        else{
+        }else{
             ret = recv(dt->m_conn_sock, buf, MAX_DATA_LEN, 0);
         }
     }
     free(buf);
+    free(outbuf);
     return NULL;
 }
 
@@ -507,6 +521,7 @@ void *DataTransmit::recv_data(void *param)
     int ret;
     BH bh;
     char *buf;
+    char *outbuf;
     struct timeval timest;
 
     FD_ZERO(&in);
@@ -514,8 +529,10 @@ void *DataTransmit::recv_data(void *param)
     timest.tv_sec = RECV_TIMEOUT;
     timest.tv_usec = 0;
     buf = (char *)malloc(MAX_DATA_LEN);
+    outbuf = (char *)malloc(MAX_DATA_LEN);
     memset(&bh, 0, sizeof(BH));
     memset(buf, 0, MAX_DATA_LEN);
+    memset(outbuf, 0, MAX_DATA_LEN);
 
     while (!dt->m_isterminate && dt->m_isconnect){
         ret = select(dt->m_conn_sock+1, &in, NULL, NULL, &timest);
@@ -541,9 +558,10 @@ void *DataTransmit::recv_data(void *param)
                     dt->errMsg("checksum error");
                 }
                 else{
-                    //callback function
+                    //decrypt and callback function
+                    dt->P_RC4(dt->m_key, (unsigned char*)buf, (unsigned char*)outbuf, bh.blen);
                     if (dt->m_callbackfunc != NULL)
-                        dt->m_callbackfunc(buf, bh.blen);
+                        dt->m_callbackfunc(outbuf, bh.blen);
                 }
             }
             else if(ret == 16){
@@ -556,6 +574,7 @@ void *DataTransmit::recv_data(void *param)
         }
     }
     dt->errMsg("recv_data thread terminate");
+    free(outbuf);
     free(buf);
     return NULL;
 }
@@ -585,4 +604,58 @@ int DataTransmit::crc32(unsigned int crc, unsigned char *buffer, unsigned int si
     for(i=0; i<size; i++)
         crc = crc_table[(crc^buffer[i])&0xff]^(crc>>8);
     return crc;
+}
+
+void DataTransmit::init_key()
+{
+    m_key[0] = 0;
+    m_key[1] = 3;
+    m_key[2] = 0;
+    m_key[3] = 2;
+    m_key[4] = 7;
+    m_key[5] = 0;
+    m_key[6] = 5;
+    m_key[7] = 6;
+    m_key[8] = 0x0A;
+    m_key[9] = 5;
+    m_key[10] = 6;
+    m_key[11] = 0x0B;
+    m_key[12] = 5;
+    m_key[13] = 6;
+    m_key[14] = 6;
+    m_key[15] = 0x0B;
+}
+
+void DataTransmit::P_RC4(unsigned char *pkey, unsigned char *pin, unsigned char *pout, unsigned char len)
+{
+    unsigned char S[256],K[256],temp;
+    unsigned int  i,j,t,x;
+
+    j = 1;
+    for(i=0;i<256;i++)
+    {
+        S[i] = (unsigned char)i;
+        if(j > 16) j = 1;
+        K[i] = pkey[j-1];
+        j++;
+    }
+    j = 0;
+    for(i=0;i<256;i++)
+    {
+        j = (j + S[i] + K[i]) % 256;
+        temp = S[i];
+        S[i] = S[j];
+        S[j] = temp;
+    }
+    i = j = 0;
+    for(x=0;x<len;x++)
+    {
+        i = (i+1) % 256;
+        j = (j + S[i]) % 256;
+        temp = S[i];
+        S[i] = S[j];
+        S[j] = temp;
+        t = (S[i] + (S[j] % 256)) % 256;
+        pout[x] = pin[x] ^ S[t];
+    }
 }
