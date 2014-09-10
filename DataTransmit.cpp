@@ -478,7 +478,7 @@ void *DataTransmit::heart_beat(void *param)
     DataTransmit *dt = (DataTransmit *)param;
     char buf[16];
     int ret;
-    strcpy(buf, "aaaaaaaaaaa\0");
+    strcpy(buf, "85j#$^dfgl@s23\0");
     while(!dt->m_isterminate && dt->m_isconnect){
         ret = send(dt->m_conn_sock, buf, 16, 0);
         if (ret < 0){
@@ -567,7 +567,6 @@ void *DataTransmit::recv_data(void *param)
             }
             else if(ret == 16){
                 //heart beat packet
-                dt->errMsg("heart beat");
             }
             else{
                 ret = recv(dt->m_conn_sock, buf, MAX_DATA_LEN, 0);
