@@ -296,6 +296,11 @@ void DataTransmit::SetUseUdp(bool set)
 {
     m_isudp = set;
     m_isheartbeat = !m_isudp;
+    if (set){
+        m_udpaddr.sin_family = PF_INET;
+        m_udpaddr.sin_addr = m_addr;
+        m_udpaddr.sin_port = htons(m_svrport);
+    }
 }
 
 int DataTransmit::SendData(char *buf, int len)
@@ -303,6 +308,7 @@ int DataTransmit::SendData(char *buf, int len)
     int sendbytes;
     int leftbytes;
     int totalbytes;
+    socklen_t addrlen;
     char *outbuf;
     //Send block head
     BH bh;
@@ -310,8 +316,13 @@ int DataTransmit::SendData(char *buf, int len)
     bh.blen = len;
     bh.chksum = crc32(0xffffffff, (unsigned char*)buf, len);
     bh.flag = 0;
+    addrlen = sizeof(struct sockaddr_in);
 
-    sendbytes = send(m_conn_sock, &bh, sizeof(bh), 0);
+    if (m_isudp)
+        sendbytes = sendto(m_conn_sock, &bh, sizeof(bh), 0, (struct sockaddr*)&m_udpaddr, addrlen);
+    else
+        sendbytes = send(m_conn_sock, &bh, sizeof(bh), 0);
+
     if ((unsigned int)sendbytes < sizeof(bh)){
         m_isconnect = false;
         errMsg("send block head failed, %d bytes", sizeof(bh));
@@ -327,10 +338,15 @@ int DataTransmit::SendData(char *buf, int len)
     if (m_isconnect){
         while (sendbytes < leftbytes){
             leftbytes = len - totalbytes;
-            sendbytes = send(m_conn_sock, outbuf+totalbytes, leftbytes, 0);
+            if (m_isudp)
+                sendbytes = sendto(m_conn_sock, outbuf+totalbytes, leftbytes, 0, (struct sockaddr*)&m_udpaddr, addrlen);
+            else
+                sendbytes = send(m_conn_sock, outbuf+totalbytes, leftbytes, 0);
+
             if (sendbytes < 0){
                 m_isconnect = false;
                 free(outbuf);
+                perror("send");
                 errMsg("send data failed, %d bytes", leftbytes);
                 return -1;
             }
@@ -447,7 +463,9 @@ void *DataTransmit::udp_clt(void *param)
         ret = recvfrom(sockfd, buf, MAX_DATA_LEN, MSG_DONTWAIT, (struct sockaddr*)&addr, &len);
         if (ret < 0)
             continue;
+        memcpy(&dt->m_udpaddr, &addr, sizeof(addr));
         dt->errMsg("recv %d bytes from %s", ret, inet_ntoa(addr.sin_addr));
+        dt->m_isconnect = true;
         if (ret == 0){
             dt->m_isconnect = false;
             close(sockfd);

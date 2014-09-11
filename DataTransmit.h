@@ -52,6 +52,7 @@ private:
     int m_svrport;
     int m_localport;
     struct in_addr m_addr;
+    struct sockaddr_in m_udpaddr;
     struct HOST_INFO m_local;
     struct HOST_INFO m_remote;
     bool m_isserver;
