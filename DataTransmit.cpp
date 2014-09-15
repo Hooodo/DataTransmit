@@ -452,12 +452,16 @@ void *DataTransmit::udp_clt(void *param)
         close(sockfd);
         return NULL;
     }
-    dt->m_conn_sock = sockfd;
+
     buf = (char *)malloc(MAX_DATA_LEN);
     outbuf = (char *)malloc(MAX_DATA_LEN);
+    memset(&bh, 0, sizeof(BH));
     memset(buf, 0, MAX_DATA_LEN);
     memset(outbuf, 0, MAX_DATA_LEN);
+
+    dt->m_conn_sock = sockfd;
     dt->errMsg("listening on %d(udp)...", dt->m_localport);
+
     while(!dt->m_isterminate){
         len = sizeof(addr);
         ret = recvfrom(sockfd, buf, MAX_DATA_LEN, MSG_DONTWAIT, (struct sockaddr*)&addr, &len);
@@ -472,6 +476,9 @@ void *DataTransmit::udp_clt(void *param)
             break;
         }
         if (ret == sizeof(BH) && memcmp(buf, dt->m_sign, 8) == 0){
+            if (bh.blen)
+                continue;
+
             memcpy(&bh, buf, sizeof(bh));
             ret = recv(dt->m_conn_sock, buf, bh.blen, 0);
             dt->P_RC4(dt->m_key, (unsigned char*)buf, (unsigned char*)outbuf, bh.blen);
@@ -546,11 +553,12 @@ void *DataTransmit::recv_data(void *param)
     FD_SET(dt->m_conn_sock, &in);
     timest.tv_sec = RECV_TIMEOUT;
     timest.tv_usec = 0;
-    buf = (char *)malloc(MAX_DATA_LEN);
-    outbuf = (char *)malloc(MAX_DATA_LEN);
+
+    buf = (char *)malloc(MAX_RECV_LEN);
+    outbuf = (char *)malloc(MAX_RECV_LEN);
     memset(&bh, 0, sizeof(BH));
-    memset(buf, 0, MAX_DATA_LEN);
-    memset(outbuf, 0, MAX_DATA_LEN);
+    memset(buf, 0, MAX_RECV_LEN);
+    memset(outbuf, 0, MAX_RECV_LEN);
 
     while (!dt->m_isterminate && dt->m_isconnect){
         ret = select(dt->m_conn_sock+1, &in, NULL, NULL, &timest);
@@ -571,6 +579,9 @@ void *DataTransmit::recv_data(void *param)
             }
 
             if (ret == sizeof(BH) && memcmp(&bh.sign, dt->m_sign, 8) == 0){
+                if (bh.blen > MAX_RECV_LEN)
+                    continue;
+
                 ret = recv(dt->m_conn_sock, buf, bh.blen, 0);
                 //decrypt
                 dt->P_RC4(dt->m_key, (unsigned char*)buf, (unsigned char*)outbuf, bh.blen);

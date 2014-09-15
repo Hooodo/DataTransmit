@@ -5,6 +5,7 @@
 #define USE_UDP
 //Data
 #define MAX_DATA_LEN 4*1024*1024
+#define MAX_RECV_LEN 10*1024*1024
 
 //Port
 #define DATA_PORT 8301
