@@ -312,7 +312,7 @@ void DataTransmit::SetUseUdp(bool set)
 void DataTransmit::SetSimplify(bool set)
 {
     m_issimplify = set;
-    m_isheartbeat = !m_isudp;
+    m_isheartbeat = !set;
 }
 
 int DataTransmit::SendData(char *buf, int len)
@@ -555,6 +555,7 @@ void *DataTransmit::udp_clt(void *param)
     }
     free(buf);
     free(outbuf);
+    dt->errMsg("udp_clt thread terminate");
     return NULL;
 }
 
@@ -608,6 +609,7 @@ void *DataTransmit::udp_clt_simplify(void *param)
             dt->m_callbackfunc(buf, ret);
 
     }
+    dt->errMsg("udp_clt_simplify thread terminate");
     free(buf);
     return NULL;
 }
