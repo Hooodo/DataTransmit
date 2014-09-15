@@ -13,6 +13,7 @@ int main()
     dt = new DataTransmit(9999);
     dt->SetCallbackfunction(recvfunc);
     //dt->SetUseUdp(true);
+    dt->SetSimplify(true);
     dt->InitialConnection();
     strcpy(buf, "hello world!\0");
     while (true){

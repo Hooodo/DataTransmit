@@ -40,6 +40,7 @@ public:
     ~DataTransmit();
     void SetCallbackfunction(callback_t func);
     void SetUseUdp(bool set);
+    void SetSimplify(bool set);//if set = true, transmition will not use crypt or block head
     int SendData(char *buf, int len);
     int RecvData(char *buf, int len);
     void InitialConnection();
@@ -61,6 +62,7 @@ private:
     bool m_isheartbeat;
     bool m_isudp;
     bool m_islocalip;
+    bool m_issimplify;
     char m_localip[16];
     unsigned char m_sign[8];
     unsigned char m_key[16];
@@ -77,6 +79,8 @@ private:
     void initialParam();
     void resolveHost(const char *szname);
     void errMsg(const char *fmt, ...);
+    int  senddatasimplify(char *buf, int len);
+    int  senddatanormaly(char *buf, int len);
     void P_RC4(unsigned char* pkey, unsigned char* pin, unsigned char* pout, unsigned int len);
     void init_key();
     void init_crc_table();
@@ -85,8 +89,10 @@ private:
     static void *connect_svr(void *param);
     static void *listen_clt(void *param);
     static void *recv_data(void *param);
+    static void *recv_data_simplify(void *param);
     static void *heart_beat(void *param);
     static void *udp_clt(void *param);
+    static void *udp_clt_simplify(void *param);
 };
 
 #endif // DATATRANSMIT_H

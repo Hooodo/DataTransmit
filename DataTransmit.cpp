@@ -249,6 +249,7 @@ void DataTransmit::initialParam()
     m_isheartbeat = true;
     m_isudp = false;
     m_islocalip = false;
+    m_issimplify = false;
     m_callbackfunc = NULL;
     m_sign[0] = 0xf9;
     m_sign[1] = 0x9f;
@@ -270,7 +271,12 @@ void DataTransmit::InitialConnection()
         if (!m_isudp)
             err = pthread_create(&m_ptd_lsnclt, NULL, listen_clt, this);
         else
-            err = pthread_create(&m_ptd_lsnclt, NULL, udp_clt, this);
+        {
+            if (m_issimplify)
+                err = pthread_create(&m_ptd_lsnclt, NULL, udp_clt_simplify, this);
+            else
+                err = pthread_create(&m_ptd_lsnclt, NULL, udp_clt, this);
+        }
     }
     else
     {
@@ -303,7 +309,24 @@ void DataTransmit::SetUseUdp(bool set)
     }
 }
 
+void DataTransmit::SetSimplify(bool set)
+{
+    m_issimplify = set;
+    m_isheartbeat = !m_isudp;
+}
+
 int DataTransmit::SendData(char *buf, int len)
+{
+    if (!m_isconnect)
+        return -1;
+
+    if (m_issimplify)
+        return senddatasimplify(buf, len);
+    else
+        return senddatanormaly(buf, len);
+}
+
+int DataTransmit::senddatanormaly(char *buf, int len)
 {
     int sendbytes;
     int leftbytes;
@@ -354,6 +377,40 @@ int DataTransmit::SendData(char *buf, int len)
         }
     }
     free(outbuf);
+    return len;
+}
+
+int DataTransmit::senddatasimplify(char *buf, int len)
+{
+    int sendbytes;
+    int leftbytes;
+    int totalbytes;
+    socklen_t addrlen;
+
+    addrlen = sizeof(struct sockaddr_in);
+
+    leftbytes = len;
+    totalbytes = 0;
+    sendbytes = 0;
+
+    if (m_isconnect){
+        while (sendbytes < leftbytes){
+            leftbytes = len - totalbytes;
+            if (m_isudp)
+                sendbytes = sendto(m_conn_sock, buf+totalbytes, leftbytes, 0, (struct sockaddr*)&m_udpaddr, addrlen);
+            else
+                sendbytes = send(m_conn_sock, buf+totalbytes, leftbytes, 0);
+
+            if (sendbytes < 0){
+                m_isconnect = false;
+                perror("send");
+                errMsg("send data failed, %d bytes", leftbytes);
+                return -1;
+            }
+            totalbytes += sendbytes;
+        }
+    }
+
     return len;
 }
 
@@ -411,7 +468,10 @@ void *DataTransmit::listen_clt(void *param)
         if (dt->m_conn_sock > 0){
             dt->errMsg("get a connection from %s(%d)", dt->m_remote.szip, dt->m_remote.port);
             dt->m_isconnect = true;
-            pthread_create(&dt->m_ptd_recv, NULL, dt->recv_data, dt);
+            if (dt->m_issimplify)
+                pthread_create(&dt->m_ptd_recv, NULL, dt->recv_data_simplify, dt);
+            else
+                pthread_create(&dt->m_ptd_recv, NULL, dt->recv_data, dt);
             if (dt->m_isheartbeat)
                 pthread_create(&dt->m_ptd_heartbeat, NULL, dt->heart_beat, dt);
             pthread_join(dt->m_ptd_recv, &tret);
@@ -498,6 +558,60 @@ void *DataTransmit::udp_clt(void *param)
     return NULL;
 }
 
+void *DataTransmit::udp_clt_simplify(void *param)
+{
+    DataTransmit *dt = (DataTransmit *)param;
+    int sockfd, ret;
+    socklen_t len;
+    char *buf;
+    struct sockaddr_in addr;
+
+    sockfd = dt->m_nc.socket_new(SOCK_DGRAM);
+    if (sockfd < 0)
+        return NULL;
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(dt->m_localport);
+    if (dt->m_islocalip)
+        addr.sin_addr.s_addr = inet_addr(dt->m_localip);
+    else
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    ret = bind(sockfd, (struct sockaddr *)&addr, sizeof(addr));
+    if (ret < 0){
+        close(sockfd);
+        return NULL;
+    }
+
+    buf = (char *)malloc(MAX_DATA_LEN);
+    memset(buf, 0, MAX_DATA_LEN);
+
+    dt->m_conn_sock = sockfd;
+    dt->errMsg("listening on %d(udp)...", dt->m_localport);
+
+    while(!dt->m_isterminate){
+        len = sizeof(addr);
+        ret = recvfrom(sockfd, buf, MAX_DATA_LEN, MSG_DONTWAIT, (struct sockaddr*)&addr, &len);
+        if (ret < 0)
+            continue;
+        memcpy(&dt->m_udpaddr, &addr, sizeof(addr));
+        dt->errMsg("recv %d bytes from %s", ret, inet_ntoa(addr.sin_addr));
+        dt->m_isconnect = true;
+        if (ret <= 0){
+            dt->m_isconnect = false;
+            close(sockfd);
+            break;
+        }
+
+        //callback function
+        if (dt->m_callbackfunc != NULL)
+            dt->m_callbackfunc(buf, ret);
+
+    }
+    free(buf);
+    return NULL;
+}
+
 void *DataTransmit::heart_beat(void *param)
 {
     DataTransmit *dt = (DataTransmit *)param;
@@ -529,7 +643,10 @@ void *DataTransmit::connect_svr(void *param)
         if (dt->m_conn_sock > 0){
             dt->m_isconnect = true;
             dt->errMsg("connect success");
-            pthread_create(&dt->m_ptd_recv, NULL, dt->recv_data, dt);
+            if (dt->m_issimplify)
+                pthread_create(&dt->m_ptd_recv, NULL, dt->recv_data_simplify, dt);
+            else
+                pthread_create(&dt->m_ptd_recv, NULL, dt->recv_data, dt);
             if (dt->m_isheartbeat)
                 pthread_create(&dt->m_ptd_heartbeat, NULL, dt->heart_beat, dt);
             pthread_join(dt->m_ptd_recv, &tret);
@@ -604,6 +721,48 @@ void *DataTransmit::recv_data(void *param)
     }
     dt->errMsg("recv_data thread terminate");
     free(outbuf);
+    free(buf);
+    return NULL;
+}
+
+void *DataTransmit::recv_data_simplify(void *param)
+{
+    DataTransmit *dt = (DataTransmit *)param;
+    fd_set in;
+    int ret;
+    char *buf;
+    struct timeval timest;
+
+    FD_ZERO(&in);
+    FD_SET(dt->m_conn_sock, &in);
+    timest.tv_sec = RECV_TIMEOUT;
+    timest.tv_usec = 0;
+
+    buf = (char *)malloc(MAX_DATA_LEN);
+    memset(buf, 0, MAX_DATA_LEN);
+
+    while (!dt->m_isterminate && dt->m_isconnect){
+        ret = select(dt->m_conn_sock+1, &in, NULL, NULL, &timest);
+        if (ret < 0){
+            if (errno == EINTR)
+                continue;
+            perror("select");
+            break;
+        }
+        if (ret == 0)
+            continue;
+        if (FD_ISSET(dt->m_conn_sock, &in)){
+            ret = recv(dt->m_conn_sock, buf, MAX_DATA_LEN, 0);
+            if (ret <= 0){
+                dt->m_isconnect = false;
+                dt->errMsg("disconnected");
+                break;
+            }
+            if (dt->m_callbackfunc != NULL)
+                dt->m_callbackfunc(buf, ret);
+        }
+    }
+    dt->errMsg("recv_data_simplify thread terminate");
     free(buf);
     return NULL;
 }
