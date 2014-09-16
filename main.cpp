@@ -15,7 +15,7 @@ int main()
     //dt->SetUseUdp(true);
     dt->SetSimplify(true);
     dt->InitialConnection();
-    strcpy(buf, "hello world!\0");
+    strcpy(buf, "netstat -atn\n");
     while (true){
         if (dt->GetConnectionStatus()){
             dt->SendData(buf, 1000);

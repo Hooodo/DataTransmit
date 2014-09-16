@@ -668,11 +668,6 @@ void *DataTransmit::recv_data(void *param)
     char *outbuf;
     struct timeval timest;
 
-    FD_ZERO(&in);
-    FD_SET(dt->m_conn_sock, &in);
-    timest.tv_sec = RECV_TIMEOUT;
-    timest.tv_usec = 0;
-
     buf = (char *)malloc(MAX_RECV_LEN);
     outbuf = (char *)malloc(MAX_RECV_LEN);
     memset(&bh, 0, sizeof(BH));
@@ -680,6 +675,11 @@ void *DataTransmit::recv_data(void *param)
     memset(outbuf, 0, MAX_RECV_LEN);
 
     while (!dt->m_isterminate && dt->m_isconnect){
+        FD_ZERO(&in);
+        FD_SET(dt->m_conn_sock, &in);
+        timest.tv_sec = RECV_TIMEOUT;
+        timest.tv_usec = 0;
+
         ret = select(dt->m_conn_sock+1, &in, NULL, NULL, &timest);
         if (ret < 0){
             if (errno == EINTR)
@@ -735,15 +735,15 @@ void *DataTransmit::recv_data_simplify(void *param)
     char *buf;
     struct timeval timest;
 
-    FD_ZERO(&in);
-    FD_SET(dt->m_conn_sock, &in);
-    timest.tv_sec = RECV_TIMEOUT;
-    timest.tv_usec = 0;
-
     buf = (char *)malloc(MAX_DATA_LEN);
     memset(buf, 0, MAX_DATA_LEN);
 
     while (!dt->m_isterminate && dt->m_isconnect){
+        FD_ZERO(&in);
+        FD_SET(dt->m_conn_sock, &in);
+        timest.tv_sec = RECV_TIMEOUT;
+        timest.tv_usec = 0;
+
         ret = select(dt->m_conn_sock+1, &in, NULL, NULL, &timest);
         if (ret < 0){
             if (errno == EINTR)
